@@ -1,62 +1,71 @@
+import glob
 import os
 from pathlib import Path
+import pandas as pd
 from playwright.sync_api import sync_playwright
 
-# Definir rutas absolutas
-BASE_DIR = Path(__file__).parent
-DIR_SUBIDAS = BASE_DIR / "subidas"
-DIR_DESCARGAS = BASE_DIR / "descargas"
+CARPETA_PDFS = "facturas"        # Carpeta local con tus PDFs
+CSV_SALIDA = "tabla_bi_desde_web.csv"
 
-# Asegurar que las carpetas existan
-DIR_SUBIDAS.mkdir(parents=True, exist_ok=True)
-DIR_DESCARGAS.mkdir(parents=True, exist_ok=True)
+def procesar_facturas_en_web():
+    archivos_pdf = glob.glob(os.path.join(CARPETA_PDFS, "*.pdf"))
+    if not archivos_pdf:
+        print(f"No se encontraron archivos PDF en la carpeta '{CARPETA_PDFS}'.")
+        return
 
-PDF_A_SUBIR = DIR_SUBIDAS / "factura_input.pdf"
+    registros_totales = []
 
-def ejecutar_flujo():
     with sync_playwright() as p:
-        # Lanzar el navegador
-        browser = p.chromium.launch(headless=False)  # Cambia a True en producción
-        
-        # 1. Configuración clave: permitir descargas en el contexto
-        context = browser.new_context(
-            accept_downloads=True
-        )
-        
-        page = context.new_page()
+        browser = p.chromium.launch(headless=False)  # False para ver cómo interactúa
+        page = browser.new_page()
 
-        # ------------------------------------------------------------------
-        # CASO A: Insertar / Subir archivo PDF
-        # ------------------------------------------------------------------
-        # Reemplaza con la URL de tu aplicación
-        # page.goto("https://tu-sistema.com/cargar-factura")
+        # URL de la web/herramienta donde cargas las facturas
+        page.goto("https://tu-plataforma-web.com/subir-factura")
 
-        # Localizador del input de tipo archivo
-        # page.locator("input[type='file']").set_input_files(str(PDF_A_SUBIR))
-        print(f"Ruta preparada para subir: {PDF_A_SUBIR}")
+        for ruta_pdf in archivos_pdf:
+            ruta_absoluta = str(Path(ruta_pdf).resolve())
+            nombre_archivo = os.path.basename(ruta_pdf)
+            print(f"Cargando: {nombre_archivo}...")
 
-        # ------------------------------------------------------------------
-        # CASO B: Descargar archivo PDF para uso posterior
-        # ------------------------------------------------------------------
-        # Reemplaza con la página donde se genera la descarga
-        # page.goto("https://tu-sistema.com/reportes")
+            # 1. Cargar el archivo PDF en el input file
+            # Ajusta el selector '#input-archivo' al id o clase real del input en tu web
+            page.locator("input[type='file']").set_input_files(ruta_absoluta)
 
-        # Escuchar el evento de descarga antes de hacer clic en el botón
-        # with page.expect_download() as download_info:
-        #     # Clic en el botón o enlace que inicia la descarga del PDF
-        #     page.locator("button#btn-descargar-pdf").click()
+            # 2. Si la web tiene un botón de "Procesar" o "Subir", haz clic:
+            # page.locator("button#btn-procesar").click()
 
-        # download = download_info.value
+            # 3. Esperar a que la tabla aparezca en pantalla
+            # Ajusta el selector '.tabla-resultados' o 'table tbody tr' según la web
+            page.wait_for_selector("table tbody tr", timeout=15000)
 
-        # Definir la ruta final donde quedará el archivo
-        # ruta_final_pdf = DIR_DESCARGAS / download.suggested_filename
-        # download.save_as(str(ruta_final_pdf))
+            # 4. Extraer filas de la tabla generada en la página
+            filas = page.locator("table tbody tr").all()
 
-        # print(f"Archivo PDF descargado exitosamente en: {ruta_final_pdf}")
+            for fila in filas:
+                celdas = fila.locator("td").all_text_contents()
+                if not celdas:
+                    continue
 
-        # Cerrar navegador
-        context.close()
+                # Ejemplo mapeando celdas típicas (ajustar según columnas de tu web)
+                # [0: Cantidad, 1: Unidad, 2: Descripción, 3: P. Unitario, 4: Total]
+                registros_totales.append({
+                    "Archivo": nombre_archivo,
+                    "Columna_1": celdas[0].strip() if len(celdas) > 0 else "",
+                    "Columna_2": celdas[1].strip() if len(celdas) > 1 else "",
+                    "Columna_3": celdas[2].strip() if len(celdas) > 2 else "",
+                    "Columna_4": celdas[3].strip() if len(celdas) > 3 else "",
+                    "Columna_5": celdas[4].strip() if len(celdas) > 4 else "",
+                })
+
         browser.close()
 
+    # 5. Guardar todo en una tabla para Power BI / Looker Studio
+    if registros_totales:
+        df = pd.DataFrame(registros_totales)
+        df.to_csv(CSV_SALIDA, index=False, encoding="utf-8-sig")
+        print(f"\nProceso finalizado. Se extrajeron {len(df)} registros en '{CSV_SALIDA}'.")
+    else:
+        print("No se extrajeron registros de las tablas web.")
+
 if __name__ == "__main__":
-    ejecutar_flujo()
+    procesar_facturas_en_web()
